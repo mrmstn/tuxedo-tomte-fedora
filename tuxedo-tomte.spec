@@ -13,7 +13,6 @@ BuildRequires:  systemd-rpm-macros
 
 Requires:       perl-interpreter
 Requires:       perl-File-FcntlLock
-Requires:       dpkg-perl
 Requires:       perl-JSON
 Requires:       perl-Config-Tiny
 Requires:       perl-libintl-perl
@@ -24,6 +23,7 @@ Requires:       perl-Parse-EDID
 Requires:       perl-Time-HiRes
 Requires:       perl-FindBin
 Requires:       perl-autodie
+Requires:       perl-File-Copy
 Requires:       PackageKit-command-not-found
 
 %description

@@ -18,6 +18,7 @@ RUN dnf update -y && dnf install -y \
     perl-Time-HiRes \
     perl-FindBin \
     perl-autodie \
+    perl-File-Copy \
     PackageKit-command-not-found \
     gettext \
     rpm-build \

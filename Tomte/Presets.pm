@@ -38,7 +38,8 @@ our %SUPPORTED_OS = (
 	"KDE neon" => ["22.04", "24.04"],
 	"Ubuntu" => ["22.04", "24.04"],
 	"Linux Mint" => ["21.1", "21.2", "21.3", "22", "22.1", "22.2"],
-	"elementary OS" => ["7.1", "8"]
+	"elementary OS" => ["7.1", "8"],
+	"Fedora Linux" => ["41", "42"]
 );
 
 our %ESSENTIAL_REPOS = (
@@ -83,6 +84,30 @@ our %ESSENTIAL_REPOS = (
 							"Components: main\n".
 							"Signed-By: /usr/share/keyrings/tuxedo-archive-keyring.gpg\n"],
 			"filename" => "/etc/apt/sources.list.d/tuxedo-computers.sources"
+		}
+	},
+
+	"Fedora Linux 41" => {
+		"rpm" => {
+			"content" => ["[tuxedo]\n".
+							"name=TUXEDO Computers\n".
+							"baseurl=https://rpm.tuxedocomputers.com/fedora/41/\n".
+							"enabled=1\n".
+							"gpgcheck=1\n".
+							"gpgkey=https://rpm.tuxedocomputers.com/fedora/RPM-GPG-KEY-tuxedo\n"],
+			"filename" => "/etc/yum.repos.d/tuxedo-computers.repo"
+		}
+	},
+
+	"Fedora Linux 42" => {
+		"rpm" => {
+			"content" => ["[tuxedo]\n".
+							"name=TUXEDO Computers\n".
+							"baseurl=https://rpm.tuxedocomputers.com/fedora/42/\n".
+							"enabled=1\n".
+							"gpgcheck=1\n".
+							"gpgkey=https://rpm.tuxedocomputers.com/fedora/RPM-GPG-KEY-tuxedo\n"],
+			"filename" => "/etc/yum.repos.d/tuxedo-computers.repo"
 		}
 	}
 );

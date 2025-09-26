@@ -146,6 +146,7 @@ my $distributionVersionID;
 my $distributionVersion;
 my $completeDistVersion;
 my $ubuntuCodename = q{};
+my $packageManagerType = 'apt'; # Default to apt, will be updated in readOSData()
 my $FAI = 0;
 if ($argValue{command} eq 'FAI') {
 	$FAI = 1;
@@ -666,9 +667,12 @@ sub readOSData {
 			$distribution = $1;
 		}
 		if ( $line =~ /^VERSION_ID=/sm ) {
-			# e.g. 22.04
-			$line =~ /VERSION_ID=\"(.*)\"/sm;
-			$distributionVersionID = $1;
+			# e.g. 22.04 or 42 (with or without quotes)
+			if ($line =~ /VERSION_ID=\"(.*)\"/sm) {
+				$distributionVersionID = $1;
+			} elsif ($line =~ /VERSION_ID=(.*)/sm) {
+				$distributionVersionID = $1;
+			}
 		}
 		if ( $line =~ /^UBUNTU_CODENAME=/sm ) {
 			# e.g. jammy
@@ -679,6 +683,19 @@ sub readOSData {
 			# e.g. 22.04.4 LTS (Jammy Jellyfish)
 			$line =~ /VERSION=\"(.*)\"/sm;
 			$distributionVersion = $1;
+		}
+		if ( $line =~ /^ID=/sm ) {
+			# e.g. fedora, ubuntu
+			$line =~ /ID=(.*)/sm;
+			my $osId = $1;
+			$osId =~ s/"//g; # Remove quotes if present
+			
+			# Set package manager type based on distribution ID
+			if ($osId =~ /(fedora|rhel|centos|rocky|alma)/sm) {
+				$packageManagerType = 'dnf';
+			} elsif ($osId =~ /(ubuntu|debian|mint|elementary)/sm) {
+				$packageManagerType = 'apt';
+			}
 		}
 	}
 	$completeDistVersion = $distribution.q{ }.$distributionVersionID;
@@ -2965,30 +2982,53 @@ sub createRepos {
 	my %repos = %{$_[0]};
 	my $DH;
 	my $modified = 0;
-	my $sourcesListDir = '/etc/apt/';
-	my $sourcesListDirD = '/etc/apt/sources.list.d/';
-	my $sourcesFileName = $sourcesListDir.'sources.list';
+	my ($sourcesListDir, $sourcesListDirD, $sourcesFileName);
 	my $distroKey = q{};
+
+	# Set up paths based on package manager type
+	if ($packageManagerType eq 'dnf') {
+		$sourcesListDir = '/etc/yum.repos.d/';
+		$sourcesListDirD = '/etc/yum.repos.d/';
+		$sourcesFileName = $sourcesListDir.'fedora.repo';
+	} else {
+		$sourcesListDir = '/etc/apt/';
+		$sourcesListDirD = '/etc/apt/sources.list.d/';
+		$sourcesFileName = $sourcesListDir.'sources.list';
+	}
 
 	if (exists($repos{$completeDistVersion})) {
 		$distroKey = $completeDistVersion;
 	} else {
-		$distroKey = $ubuntuCodename;
+		# For Fedora, use the complete distribution version, for Ubuntu use codename
+		if ($packageManagerType eq 'dnf') {
+			$distroKey = $completeDistVersion;
+		} else {
+			$distroKey = $ubuntuCodename;
+		}
 	}
 	printLog("detected distroKey: >$distroKey<", 'TL2', '[DEBUG]');
 
-	# if either testdeb or testmirrors exist, leave everything as it is
-	if (exists $repos{$distroKey}{deb}) {
-		printLog("deb repos detected", 'TL2', '[DEBUG]');
-		if (isLineInFile('/etc/apt/sources.list.d/tuxedo-computers.list', '^deb https?:\/\/testdeb.*')) {
-			printLog('testing environment detected, leaving repos as they are', 'TL2', '[DEBUG]');
-			return (1);
+	# Handle different repository types based on package manager
+	if ($packageManagerType eq 'dnf') {
+		# For DNF/RPM systems, check for rpm repo type
+		if (exists $repos{$distroKey}{rpm}) {
+			printLog("rpm repos detected", 'TL2', '[DEBUG]');
+			# Skip test environment detection for now - could be added later
 		}
-	} elsif (exists $repos{$distroKey}{mirrors}) {
-		printLog("mirror repos detected", 'TL2', '[DEBUG]');
-		if (isLineInFile('/etc/apt/sources.list', '^deb https?:\/\/testmirrors.*')) {
-			printLog('testing environment detected, leaving repos as they are', 'TL2', '[DEBUG]');
-			return (1);
+	} else {
+		# For APT systems, use existing logic
+		if (exists $repos{$distroKey}{deb}) {
+			printLog("deb repos detected", 'TL2', '[DEBUG]');
+			if (isLineInFile('/etc/apt/sources.list.d/tuxedo-computers.list', '^deb https?:\/\/testdeb.*')) {
+				printLog('testing environment detected, leaving repos as they are', 'TL2', '[DEBUG]');
+				return (1);
+			}
+		} elsif (exists $repos{$distroKey}{mirrors}) {
+			printLog("mirror repos detected", 'TL2', '[DEBUG]');
+			if (isLineInFile('/etc/apt/sources.list', '^deb https?:\/\/testmirrors.*')) {
+				printLog('testing environment detected, leaving repos as they are', 'TL2', '[DEBUG]');
+				return (1);
+			}
 		}
 	}
 
@@ -3236,6 +3276,44 @@ sub commentOut {
 # package handling
 #
 
+###############################################################################
+# Package Manager Abstraction Functions
+# Support both APT (Debian/Ubuntu) and DNF (Fedora/RHEL) package managers
+###############################################################################
+
+# Get package install command based on distribution
+sub getPackageInstallCommand {
+	my ($packages, $options) = @_;
+	$options //= '';
+	
+	if ($packageManagerType eq 'dnf') {
+		return "dnf install -y $options $packages";
+	} else {
+		return "apt-get -y install -o Dpkg::lock::timeout=0 $options $packages";
+	}
+}
+
+# Get package removal command based on distribution
+sub getPackageRemoveCommand {
+	my ($packages, $options) = @_;
+	$options //= '';
+	
+	if ($packageManagerType eq 'dnf') {
+		return "dnf remove -y $options $packages";
+	} else {
+		return "apt-get -yq remove -o Dpkg::lock::timeout=0 $options $packages";
+	}
+}
+
+
+# Update package cache
+sub updatePackageCache {
+	if ($packageManagerType eq 'dnf') {
+		return `dnf makecache 2>&1`;
+	} else {
+		return `apt-get update 2>&1`;
+	}
+}
 
 ###############################################################################
 # get packagekit status from systemd getSystemStatus(systemdmodule)
@@ -3997,16 +4075,33 @@ sub isPackageInstalled {
 	if ($package eq q{}) {
 		return (0);
 	}
-	my $cmd = $consoleLanguage.'dpkg-query -W -f=\'${db:Status-Abbrev}\' '.$package.' 2>&1';
-	my $retString = `$cmd`;
-	my $retValue = $?/$RETVAL_CONVERTER;
-	printLog("checking if $package is installed\nanswer: $retString", 'L2', '[DEBUG]');
-	if ($retString =~ m/^[ih][i]\s$/sm) {
-		printLog("package $package is installed: $retString", 'L1', '[DEBUG]');
-		return (1);
+	
+	my ($cmd, $retString, $retValue);
+	
+	if ($packageManagerType eq 'dnf') {
+		$cmd = $consoleLanguage.'rpm -q '.$package.' 2>&1';
+		$retString = `$cmd`;
+		$retValue = $?/$RETVAL_CONVERTER;
+		printLog("checking if $package is installed (rpm)\nanswer: $retString", 'L2', '[DEBUG]');
+		if ($retValue == 0) {
+			printLog("package $package is installed: $retString", 'L1', '[DEBUG]');
+			return (1);
+		} else {
+			printLog("package $package is not installed: $retString", 'L1', '[DEBUG]');
+			return (0);
+		}
 	} else {
-		printLog("package $package is not installed: $retString", 'L1', '[DEBUG]');
-		return (0);
+		$cmd = $consoleLanguage.'dpkg-query -W -f=\'${db:Status-Abbrev}\' '.$package.' 2>&1';
+		$retString = `$cmd`;
+		$retValue = $?/$RETVAL_CONVERTER;
+		printLog("checking if $package is installed (dpkg)\nanswer: $retString", 'L2', '[DEBUG]');
+		if ($retString =~ m/^[ih][i]\s$/sm) {
+			printLog("package $package is installed: $retString", 'L1', '[DEBUG]');
+			return (1);
+		} else {
+			printLog("package $package is not installed: $retString", 'L1', '[DEBUG]');
+			return (0);
+		}
 	}
 }
 
