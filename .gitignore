@@ -1,3 +1,4 @@
 *.swp
 debian/tuxedo-tomte
 .vscode
+output
