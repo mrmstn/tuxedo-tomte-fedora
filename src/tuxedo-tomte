@@ -444,7 +444,18 @@ sub isLocked {
 #
 sub isPMlocked {
 	my $result;
-	foreach my $key (keys %lockFilesList) {
+	
+	# DNF handles its own locking, so we don't need to check manual locks for Fedora
+	if ($packageManagerType eq 'dnf') {
+		printLog("Locking: DNF handles its own locking, skipping manual lock checks", 'L2', '[DEBUG]');
+		return (0);
+	}
+	
+	# Check APT/DPKG specific lock files
+	my @lockKeysToCheck = ('aptArchivesLock', 'aptListsLock', 'dpkgLock', 'dpkgLockFrontend');
+	
+	foreach my $key (@lockKeysToCheck) {
+		next unless exists $lockFilesList{$key};
 		$result = isLocked($key);
 		if ($result == 1) {
 			printLog("Locking: one or more files are locked", 'L2', '[DEBUG]');
@@ -553,15 +564,26 @@ sub releaseLock {
 # returns 0 if some could not be locked
 #
 sub lockPM {
-	my $lockFilesListHashSize = keys %lockFilesList;
 	my $processedLockFiles = 0;
-
+	
 	# in FAI it should never be necessary to lock any files
 	if ($FAI) {
 		return (1);
 	}
+	
+	# DNF handles its own locking, so we don't need manual locks for Fedora
+	if ($packageManagerType eq 'dnf') {
+		printLog("Locking: DNF handles its own locking, skipping manual locks", 'L2', '[DEBUG]');
+		return (1);
+	}
+	
+	# Lock APT/DPKG specific files
+	my @lockKeysToCheck = ('aptArchivesLock', 'aptListsLock', 'dpkgLock', 'dpkgLockFrontend');
+	my $lockFilesListHashSize = scalar @lockKeysToCheck;
+	
 	printLog("Locking: trying to lock all files for Tomte", 'L2', '[DEBUG]');
-	foreach my $key (keys %lockFilesList) {
+	foreach my $key (@lockKeysToCheck) {
+		next unless exists $lockFilesList{$key};
 		# stop if can't get lock
 		last if (acquireLock($key) != 1);
 		$processedLockFiles++;
@@ -587,11 +609,21 @@ sub lockPM {
 #
 sub unlockPM {
 	my $reason = shift;
-	my $hashSize = keys %lockFilesList;
 	my $countReleased = 0;
 	my $countToRelease = 0;
 	printLog("Locking: attempting to unlock all files for >$reason< ...", 'L2', '[DEBUG]');
-	foreach my $key (keys %lockFilesList) {
+	
+	# DNF handles its own locking, so we don't need to unlock manual locks for Fedora
+	if ($packageManagerType eq 'dnf') {
+		printLog("Locking: DNF handles its own locking, skipping manual unlock", 'L2', '[DEBUG]');
+		return (1);
+	}
+	
+	# Unlock APT/DPKG specific files
+	my @lockKeysToCheck = ('aptArchivesLock', 'aptListsLock', 'dpkgLock', 'dpkgLockFrontend');
+	
+	foreach my $key (@lockKeysToCheck) {
+		next unless exists $lockFilesList{$key};
 		printLog("Locking: is $key locked?: $lockFilesList{$key}{locked}", 'L2', '[DEBUG]');
 		if ($lockFilesList{$key}{locked}) {
 			printLog("Locking: try to unlock", 'L2', '[DEBUG]');
@@ -4149,36 +4181,48 @@ sub installPackage {
 	}
 	if ($FAI) {
 		printLog("install package $packageName", 'TL0', '[INFO]');
-		# usefull debug option: Debug::pkgDPkgProgressReporting=true
+		my $installCmd;
 		if ($logLevel > 1) {
-			$retval = `apt-get -o Debug::pkgDPkgProgressReporting=true -o Dpkg::lock::timeout=0 -y install $packageName`;
+			if ($packageManagerType eq 'dnf') {
+				$installCmd = "dnf install -y $packageName";
+			} else {
+				$installCmd = "apt-get -o Debug::pkgDPkgProgressReporting=true -o Dpkg::lock::timeout=0 -y install $packageName";
+			}
 		} else {
-			$retval = `apt-get -y install -o Dpkg::lock::timeout=0 $packageName`;
+			$installCmd = getPackageInstallCommand($packageName);
 		}
-		printLog("return from apt-get:\n$retval", 'TL2', '[DEBUG]');
+		$retval = `$installCmd`;
+		printLog("return from package manager:\n$retval", 'TL2', '[DEBUG]');
 		$retval = isPackageInstalled($packageName);
 	} elsif (!($LiveISO && $noNetwork)) {
 		if (checkNetwork( $NETWORK_CHECKS, 1)) {
 			messageLongInstall();
 			printLog("install package $packageName", 'L0', '[INFO]');
 			deactivatePackagekit();
-			if (unlockPM("apt-get -yq install $packageName") && (isPMlocked() == 0)) {
+			my $installCmd = getPackageInstallCommand($packageName, "-q");
+			if (unlockPM("$installCmd") && (isPMlocked() == 0)) {
 				printLog("installing $packageName", 'L2', '[DEBUG]');
 				if ($logLevel > 1) {
-					$retval = `apt-get -yq -o Dpkg::lock::timeout=0 install $packageName >>$logFile 2>&1`;
+					$retval = `$installCmd >>$logFile 2>&1`;
 				} else {
-					$retval = `apt-get -yq -o Dpkg::lock::timeout=0 install $packageName >/dev/null 2>&1`;
+					$retval = `$installCmd >/dev/null 2>&1`;
 				}
 				lockPM();
-				printLog("return from apt-get:\n$retval", 'L2', '[DEBUG]');
+				printLog("return from package manager:\n$retval", 'L2', '[DEBUG]');
 				$retval = isPackageInstalled($packageName);
 				if ($retval == 0) {
 					printLog("failed to install $packageName", 'L0', '[WARN]');
 					printLog("will try again later", 'L0', '[WARN]');
 					# repair a possibly wrecked package manager
-					if (unlockPM('dpkg --configure -a') && (isPMlocked() == 0)) {
-						printLog("executing --configure -a", 'L2', '[DEBUG]');
-						`dpkg --configure -a`;
+					my $repairCmd;
+					if ($packageManagerType eq 'dnf') {
+						$repairCmd = 'dnf check';
+					} else {
+						$repairCmd = 'dpkg --configure -a';
+					}
+					if (unlockPM($repairCmd) && (isPMlocked() == 0)) {
+						printLog("executing package manager repair: $repairCmd", 'L2', '[DEBUG]');
+						`$repairCmd`;
 						lockPM();
 						startTomteDelayed();
 					} else {
@@ -4213,7 +4257,13 @@ sub installPackage {
 # fills the hash value with all the available packages
 #
 sub initAvailablePackagesList {
-	@availableDebianPackages = `apt-cache pkgnames`;
+	my $cmd;
+	if ($packageManagerType eq 'dnf') {
+		$cmd = 'dnf list available --quiet | awk \'NR>1{print $1}\' | cut -d\'.\' -f1';
+	} else {
+		$cmd = 'apt-cache pkgnames';
+	}
+	@availableDebianPackages = `$cmd`;
 	chomp(@availableDebianPackages);
 	return (0);
 }
@@ -4263,11 +4313,12 @@ sub removePackage {
 		printLog("parameter was undefined", 'L2', '[WARN]');
 		$parameter = q{};
 	}
-	if (unlockPM("apt-get -yq remove $parameter $packageName") && (isPMlocked() == 0)) {
+	my $removeCmd = getPackageRemoveCommand("$parameter $packageName", "-q");
+	if (unlockPM($removeCmd) && (isPMlocked() == 0)) {
 		printLog("removing $packageName", 'L2', '[DEBUG]');
-		$retval = `$consoleLanguage apt-get -yq -o Dpkg::lock::timeout=0 remove $parameter $packageName >/dev/null 2>&1`;
+		$retval = `$consoleLanguage $removeCmd >/dev/null 2>&1`;
 		lockPM();
-		printLog("return from apt-get:\n$retval", 'L2', '[DEBUG]');
+		printLog("return from package manager:\n$retval", 'L2', '[DEBUG]');
 		$retval = isPackageInstalled($packageName);
 		if ($retval == 1) {
 			printLog("failed to remove $packageName", 'L0', '[WARN]');
@@ -4883,9 +4934,14 @@ sub aptgetRefreshModule {
 		if (checkNetwork( $NETWORK_CHECKS, 1 )) {
 			deactivatePackagekit();
 			while (($exitStatus != 0) && ($refreshTriesDone <= $refreshTries)) {
-				my $command = $consoleLanguage.'apt-get update 2>/dev/null';
+				my $command;
+				if ($packageManagerType eq 'dnf') {
+					$command = $consoleLanguage.'dnf makecache --quiet 2>/dev/null';
+				} else {
+					$command = $consoleLanguage.'apt-get update 2>/dev/null';
+				}
 				if(unlockPM($command) && (isPMlocked() == 0)) {
-					printLog("executing apt-get update", 'L2', '[DEBUG]');
+					printLog("executing package cache update", 'L2', '[DEBUG]');
 					$output = `$command`;
 					$exitStatus = $?/$RETVAL_CONVERTER;
 					initAvailablePackagesList();
