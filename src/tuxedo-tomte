@@ -1494,15 +1494,17 @@ sub tuxedorepos() {
 		return (1);
 	}
 
-	# create default repo list if it does not exist
-	if (! -e '/etc/apt/sources.list') {
-		if (open($FH, '>', '/etc/apt/sources.list')) {
-			printLog('created /etc/apt/sources.list because it was not there', 'L2', '[WARN]');
-			if (close($FH)) {
-				printLog('could not close /etc/apt/sources.list thats very bad', 'L0', '[ERROR]');
+	# create default repo list if it does not exist (APT systems only)
+	if ($packageManagerType ne 'dnf') {
+		if (! -e '/etc/apt/sources.list') {
+			if (open($FH, '>', '/etc/apt/sources.list')) {
+				printLog('created /etc/apt/sources.list because it was not there', 'L2', '[WARN]');
+				if (close($FH)) {
+					printLog('could not close /etc/apt/sources.list thats very bad', 'L0', '[ERROR]');
+				}
+			} else {
+				printLog('could not create /etc/apt/sources.list thats very bad', 'L0', '[ERROR]');
 			}
-		} else {
-			printLog('could not create /etc/apt/sources.list thats very bad', 'L0', '[ERROR]');
 		}
 	}
 
@@ -1515,8 +1517,8 @@ sub tuxedorepos() {
 			addToConfiguredModules($module, "failed");
 		} else {
 			# $thirdPartyMirrorsFile is needed for Ubuntu's which use update-manager,
-			# Mint uses mintUpdate instead
-			if (!(($ubuntuCodename =~ /(jammy|noble)/sm) && ($distribution =~ /Linux Mint/sm))) {
+			# Mint uses mintUpdate instead, Fedora doesn't use update-manager
+			if ($packageManagerType ne 'dnf' && !(($ubuntuCodename =~ /(jammy|noble)/sm) && ($distribution =~ /Linux Mint/sm))) {
 				if (! -e $thirdPartyMirrorsFile) {
 					printLog("$thirdPartyMirrorsFile not present, will create one ...", 'L0', '[WARN]');
 					if (! (write_file($thirdPartyMirrorsFile, {'err_mode' => 'carp'}, $thirdPartyMirrorsFileText)) ) {
@@ -1534,8 +1536,8 @@ sub tuxedorepos() {
 				$presetModules{$module}{upgraded} = "yes";
 			}
 		}
-		# remove obsolete entries if they still exist
-		if ($ubuntuCodename =~ /noble/) {
+		# remove obsolete entries if they still exist (APT systems only)
+		if ($packageManagerType ne 'dnf' && $ubuntuCodename =~ /noble/) {
 			if (-e '/etc/apt/sources.list.d/tuxedo-computers.list') {
 				printLog("removing obsolete /etc/apt/sources.list.d/tuxedo-computers.list", 'L0', '[INFO]');
 				unlink('/etc/apt/sources.list.d/tuxedo-computers.list');
@@ -1557,8 +1559,8 @@ sub tuxedorepos() {
 	if ($action eq 'upgrade') {
 		printLog("upgrading $presetModules{$module}{name}", 'L1', '[INFO]');
 
-		# remove obsolete entries if they still exist
-		if ($ubuntuCodename =~ /noble/) {
+		# remove obsolete entries if they still exist (APT systems only)
+		if ($packageManagerType ne 'dnf' && $ubuntuCodename =~ /noble/) {
 			if (-e '/etc/apt/sources.list.d/tuxedo-computers.list') {
 				printLog("removing obsolete /etc/apt/sources.list.d/tuxedo-computers.list", 'L0', '[INFO]');
 				unlink('/etc/apt/sources.list.d/tuxedo-computers.list');
@@ -1577,7 +1579,10 @@ sub tuxedorepos() {
 			}
 		}
 
-		backupFile('/etc/apt/sources.list');
+		# Backup sources.list for APT systems only
+		if ($packageManagerType ne 'dnf') {
+			backupFile('/etc/apt/sources.list');
+		}
 		$retval = createRepos(\%essentialReposList);
 		addRepoKey();
 		if ($retval == 0) {
@@ -1585,8 +1590,8 @@ sub tuxedorepos() {
 			addToConfiguredModules($module, "failed");
 		} else {
 			# $thirdPartyMirrorsFile is needed for Ubuntu's which use update-manager,
-			# Mint uses mintUpdate instead
-			if (! (($ubuntuCodename =~ /jammy/sm) && ($distribution =~ /Linux Mint/sm)) ) {
+			# Mint uses mintUpdate instead, Fedora doesn't use update-manager
+			if ($packageManagerType ne 'dnf' && !(($ubuntuCodename =~ /jammy/sm) && ($distribution =~ /Linux Mint/sm))) {
 				if (! -e $thirdPartyMirrorsFile) {
 					printLog("$thirdPartyMirrorsFile not present, will create one ...", 'L0', '[WARN]');
 					if (! (write_file($thirdPartyMirrorsFile, {'err_mode' => 'carp'}, $thirdPartyMirrorsFileText)) ) {
@@ -1634,7 +1639,12 @@ sub tuxedomirrors() {
 	if ($action eq 'install') {
 		printLog("applying $presetModules{$module}{name}", 'L1', '[INFO]');
 		$retval = createRepos(\%otherReposList);
-		$retval3 = cleanSourcesList($otherReposList{$completeDistVersion}{mirrors}{filename});
+		# Clean sources list for APT systems only
+		if ($packageManagerType ne 'dnf' && exists $otherReposList{$completeDistVersion}{mirrors}{filename}) {
+			$retval3 = cleanSourcesList($otherReposList{$completeDistVersion}{mirrors}{filename});
+		} else {
+			$retval3 = 1; # No cleanup needed for DNF systems
+		}
 		addRepoKey();
 		if ($retval == 0) {
 			$presetModules{$module}{installed} = "failed";
@@ -1653,9 +1663,17 @@ sub tuxedomirrors() {
 	}
 	if ($action eq 'upgrade') {
 		printLog("uprading $presetModules{$module}{name}", 'L1', '[INFO]');
-		backupFile('/etc/apt/sources.list');
+		# Backup sources.list for APT systems only
+		if ($packageManagerType ne 'dnf') {
+			backupFile('/etc/apt/sources.list');
+		}
 		$retval = createRepos(\%otherReposList);
-		$retval3 = cleanSourcesList($otherReposList{$completeDistVersion}{mirrors}{filename});
+		# Clean sources list for APT systems only
+		if ($packageManagerType ne 'dnf' && exists $otherReposList{$completeDistVersion}{mirrors}{filename}) {
+			$retval3 = cleanSourcesList($otherReposList{$completeDistVersion}{mirrors}{filename});
+		} else {
+			$retval3 = 1; # No cleanup needed for DNF systems
+		}
 		addRepoKey();
 		if ($retval == 0) {
 			$presetModules{$module}{installed} = "failed";
@@ -3045,7 +3063,11 @@ sub createRepos {
 		# For DNF/RPM systems, check for rpm repo type
 		if (exists $repos{$distroKey}{rpm}) {
 			printLog("rpm repos detected", 'TL2', '[DEBUG]');
-			# Skip test environment detection for now - could be added later
+			# Check for test environment in Fedora repository files
+			if (isLineInFile('/etc/yum.repos.d/tuxedo-computers.repo', 'baseurl=.*testrpm.*')) {
+				printLog('testing environment detected, leaving repos as they are', 'TL2', '[DEBUG]');
+				return (1);
+			}
 		}
 	} else {
 		# For APT systems, use existing logic
@@ -3074,10 +3096,10 @@ sub createRepos {
 		mkdir($sourcesListDirD);
 	}
 
-	# workaround for possible old entries in sources list
+	# workaround for possible old entries in sources list (APT systems only)
 	# do NOT add more distributions/kernelsList here as this is meant only for
 	# old installations where those entries might still exist
-	if (($ubuntuCodename eq 'jammy') || ($ubuntuCodename eq 'noble')) {
+	if ($packageManagerType ne 'dnf' && (($ubuntuCodename eq 'jammy') || ($ubuntuCodename eq 'noble'))) {
 		if(-e '/etc/apt/sources.list.d/tuxedo-computers.list'){
 			edit_file { s/deb http:\/\/deb.tuxedocomputers.com\/ubuntu jammy main//gsm } '/etc/apt/sources.list.d/tuxedo-computers.list', {'err_mode' => 'carp'};
 			edit_file { s/# Added by TUXEDO Tomte//gsm } '/etc/apt/sources.list.d/tuxedo-computers.list', {'err_mode' => 'carp'};
@@ -3164,35 +3186,84 @@ sub addRepoKey {
 	my $outputKey;
 	my $counter = 0;
 	my $sleepTime = 1; # seconds
-	# install TUXEDO keyring for repositories
-	if (! isPackageInstalled('tuxedo-archive-keyring')) {
+	
+	# Check if keyring/key is already installed based on package manager
+	my $keyringInstalled = 0;
+	if ($packageManagerType eq 'dnf') {
+		# For DNF, check if TUXEDO GPG key is imported
+		my $keyCheck = `rpm -q gpg-pubkey --qf "%{SUMMARY}\n" 2>/dev/null | grep -i tuxedo`;
+		$keyringInstalled = ($keyCheck ne '') ? 1 : 0;
+	} else {
+		# For APT, check if tuxedo-archive-keyring package is installed
+		$keyringInstalled = isPackageInstalled('tuxedo-archive-keyring');
+	}
+	
+	if (!$keyringInstalled) {
 		printLog("TUXEDO keyring is not installed", 'L0', '[WARN]');
 		if ( checkNetwork( $NETWORK_CHECKS, 1 ) ) {
-			$outputKey = `wget -r -nd --no-parent -P /tmp/ -A 'tuxedo-archive-keyring*.deb' https://deb.tuxedocomputers.com/ubuntu/pool/main/t/tuxedo-archive-keyring/`;
 			deactivatePackagekit();
-			# wait a bit for package management to settle down
-			while ($counter < $NETWORK_CHECKS) {
-				$counter++;
-				my $command = $consoleLanguage.'apt-get -y --allow-unauthenticated -o Dpkg::lock::timeout=0 install /tmp/tuxedo-archive-keyring* 2>/dev/null';
-				if (unlockPM("$command") && (isPMlocked() == 0)) {
-					printLog("executing: $command", 'L2', '[DEBUG]');
-					$outputKey = `$command`;
-					$errorCode = $?/$RETVAL_CONVERTER;
-					lockPM();
-					if ($errorCode != 0) {
-						printLog("error code apt-get: $errorCode", 'L0', '[ERROR]');
-						printLog("output apt-get: $outputKey", 'L0', '[ERROR]');
+			
+			if ($packageManagerType eq 'dnf') {
+				# For DNF systems: Import GPG key directly
+				printLog("Installing TUXEDO GPG key for DNF/RPM systems", 'L2', '[DEBUG]');
+				while ($counter < $NETWORK_CHECKS) {
+					$counter++;
+					my $keyUrl = "https://rpm.tuxedocomputers.com/fedora/RPM-GPG-KEY-tuxedo";
+					my $command = $consoleLanguage."rpm --import $keyUrl 2>/dev/null";
+					if (unlockPM("$command") && (isPMlocked() == 0)) {
+						printLog("executing: $command", 'L2', '[DEBUG]');
+						$outputKey = `$command`;
+						$errorCode = $?/$RETVAL_CONVERTER;
+						lockPM();
+						if ($errorCode != 0) {
+							printLog("error code rpm --import: $errorCode", 'L0', '[ERROR]');
+							printLog("output rpm --import: $outputKey", 'L0', '[ERROR]');
+						} else {
+							printLog("TUXEDO GPG key imported successfully", 'L2', '[INFO]');
+							last;
+						}
 					} else {
-						printLog("no errors installing keyrings", 'L2', '[INFO]');
-						last;
+						printLog("something is wrong while looking for locks for keyring installation", 'L0', '[ERROR]');
 					}
-				} else {
-					printLog("something is wrong while looking for locks for keyring installation", 'L0', '[ERROR]');
+					printLog("problem installing keyring, trying again in $sleepTime seconds", 'L0', '[WARN]');
+					sleep($sleepTime);
 				}
-				printLog("problem installing keyring, trying again in $sleepTime seconds", 'L0', '[WARN]');
-				sleep($sleepTime);
+			} else {
+				# For APT systems: Keep existing DEB package installation
+				printLog("Installing TUXEDO keyring package for APT/DEB systems", 'L2', '[DEBUG]');
+				$outputKey = `wget -r -nd --no-parent -P /tmp/ -A 'tuxedo-archive-keyring*.deb' https://deb.tuxedocomputers.com/ubuntu/pool/main/t/tuxedo-archive-keyring/`;
+				while ($counter < $NETWORK_CHECKS) {
+					$counter++;
+					my $installCmd = getPackageInstallCommand('/tmp/tuxedo-archive-keyring*', '--allow-unauthenticated');
+					if (unlockPM("$installCmd") && (isPMlocked() == 0)) {
+						printLog("executing: $installCmd", 'L2', '[DEBUG]');
+						$outputKey = `$installCmd 2>/dev/null`;
+						$errorCode = $?/$RETVAL_CONVERTER;
+						lockPM();
+						if ($errorCode != 0) {
+							printLog("error code package manager: $errorCode", 'L0', '[ERROR]');
+							printLog("output package manager: $outputKey", 'L0', '[ERROR]');
+						} else {
+							printLog("no errors installing keyrings", 'L2', '[INFO]');
+							last;
+						}
+					} else {
+						printLog("something is wrong while looking for locks for keyring installation", 'L0', '[ERROR]');
+					}
+					printLog("problem installing keyring, trying again in $sleepTime seconds", 'L0', '[WARN]');
+					sleep($sleepTime);
+				}
 			}
-			if (isPackageInstalled("tuxedo-archive-keyring")) {
+			
+			# Verify installation succeeded
+			if ($packageManagerType eq 'dnf') {
+				my $keyCheck = `rpm -q gpg-pubkey --qf "%{SUMMARY}\n" 2>/dev/null | grep -i tuxedo`;
+				$keyringInstalled = ($keyCheck ne '') ? 1 : 0;
+			} else {
+				$keyringInstalled = isPackageInstalled('tuxedo-archive-keyring');
+			}
+			
+			if ($keyringInstalled) {
 				printLog("TUXEDO keyring installed successfully", 'L2', '[INFO]');
 				return (1);
 			} else {
